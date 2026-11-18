@@ -1,0 +1,2 @@
+proxmox_endpoint  = "https://10.20.10.3:8006/api2/json"
+proxmox_api_token = "tofu@pve!<TOKENNAAM>=<SECRET>"

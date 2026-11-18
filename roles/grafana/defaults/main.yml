@@ -1,0 +1,2 @@
+grafana_http_port: 3000
+grafana_prometheus_url: "http://localhost:9090"

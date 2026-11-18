@@ -1,0 +1,6 @@
+---
+- name: Install Zabbix Agent 2 on all lab VMs
+  hosts: app_servers,db01,git_server,proxy,monitoring
+  become: true
+  roles:
+    - zabbix_agent

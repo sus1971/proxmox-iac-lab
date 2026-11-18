@@ -1,0 +1,112 @@
+---
+- name: Bestaat de reverse-zone al
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones/{{ powerdns_reverse_zone }}."
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    status_code: [200, 404]
+  register: pdns_rzone
+  changed_when: false
+  no_log: true
+
+- name: Reverse-zone aanmaken (primary)
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones"
+    method: POST
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    body_format: json
+    body:
+      name: "{{ powerdns_reverse_zone }}."
+      kind: Master
+      nameservers:
+        - "pdns01.{{ powerdns_zone }}."
+        - "pdns02.{{ powerdns_zone }}."
+    status_code: 201
+  when:
+    - powerdns_is_primary
+    - pdns_rzone.status == 404
+  no_log: true
+
+- name: Reverse-zone aanmaken (secondary)
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones"
+    method: POST
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    body_format: json
+    body:
+      name: "{{ powerdns_reverse_zone }}."
+      kind: Slave
+      masters:
+        - "{{ powerdns_primary_ip }}:{{ powerdns_auth_port }}"
+    status_code: 201
+  when:
+    - not powerdns_is_primary
+    - pdns_rzone.status == 404
+  no_log: true
+
+- name: Reverse-zoneoverdracht aanvragen (secondary)
+  ansible.builtin.uri:
+    url: >-
+      {{ powerdns_api_url }}/zones/{{ powerdns_reverse_zone }}./axfr-retrieve
+    method: PUT
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    status_code: [200, 400, 422]
+  when: not powerdns_is_primary
+  changed_when: false
+  no_log: true
+
+- name: PTR-records beheren (primary)
+  when: powerdns_is_primary
+  block:
+    - name: Reverse-zonestatus ophalen
+      ansible.builtin.uri:
+        url: "{{ powerdns_api_url }}/zones/{{ powerdns_reverse_zone }}."
+        headers:
+          X-API-Key: "{{ powerdns_api_key }}"
+      register: pdns_rstate
+      changed_when: false
+      no_log: true
+
+    - name: Bestaande PTR-records als naam naar doel
+      ansible.builtin.set_fact:
+        pdns_ptr_existing: >-
+          {{ dict(p_sets | map(attribute='name')
+          | zip(p_sets | map(attribute='records')
+          | map('first') | map(attribute='content'))) }}
+      vars:
+        p_sets: >-
+          {{ pdns_rstate.json.rrsets
+          | selectattr('type', 'eq', 'PTR') | list }}
+
+    - name: PTR-records bijwerken bij afwijking
+      ansible.builtin.uri:
+        url: "{{ powerdns_api_url }}/zones/{{ powerdns_reverse_zone }}."
+        method: PATCH
+        headers:
+          X-API-Key: "{{ powerdns_api_key }}"
+        body_format: json
+        body:
+          rrsets:
+            - name: "{{ ptr_name }}"
+              type: PTR
+              ttl: 300
+              changetype: REPLACE
+              records:
+                - content: "{{ ptr_target }}"
+                  disabled: false
+        status_code: 204
+      loop: "{{ powerdns_records }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        ptr_name: >-
+          {{ item.ip.split('.')[-1] }}.{{ powerdns_reverse_zone }}.
+        ptr_target: "{{ item.name }}.{{ powerdns_zone }}."
+      when: >-
+        item.ip.split('.')[:3] | reverse | join('.')
+        ~ '.in-addr.arpa' == powerdns_reverse_zone
+        and pdns_ptr_existing[ptr_name] | default('') != ptr_target
+      no_log: true

@@ -1,0 +1,6 @@
+---
+- name: Install and configure PostgreSQL on db01 for OpenTofu state
+  hosts: db01
+  become: true
+  roles:
+    - postgresql

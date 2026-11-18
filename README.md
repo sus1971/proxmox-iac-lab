@@ -1,147 +1,106 @@
-# proxmox-iac-lab 
-Nederlandse versie: README.nl.md
+# proxmox-iac-lab
 
-Proxmox lab as code: OpenTofu, Ansible, Gitea CI — root-cause analysis
-# Proxmox IaC Test Lab — Root-Cause Analysis
+[Nederlands](README.nl.md) · English
 
-Incidents from building a Proxmox lab entirely as code: VMs from templates with OpenTofu, configuration with Ansible, CI in Gitea Actions, monitoring with Zabbix and Prometheus/Grafana. Every incident follows the same format: symptom → root cause → fix → lesson.
+A home lab where a small business environment is built and torn down entirely as code: virtual machines with OpenTofu, configuration with Ansible, checks through a CI pipeline. The lab is a personal learning environment, not production.
 
----
+Who it is for: readers who want to see how I set up, test and document Linux infrastructure reproducibly.
 
-## 1. Locale error (`nl_NL.UTF-8`/`en_US.UTF-8`) — recurring on every new VM
+Status: first version. See [Planned](#planned).
 
-**Symptom:** `perl: warning: Setting locale failed` on almost every new machine (`pve`, `ans01-tl`, `db01`, `mon-lab02`, etc.).
+## What has been built
 
-**Root cause:** the SSH client on the admin workstation forwards `LC_*` environment variables (including `nl_NL.UTF-8`) to every server it logs in to. That locale was never generated in the VMs, because the fix was never built into the base templates (9000/9100) — every fix was a one-off, per-VM change.
+| Layer | Tooling | What it does |
+|---|---|---|
+| Virtualisation | Proxmox VE (node `pve`) | Hypervisor for all lab VMs |
+| Network | OPNsense (`fw01-tl`) | Firewall and routing for the lab subnet |
+| Provisioning | OpenTofu, `bpg/proxmox` provider | Clones VMs from templates |
+| Configuration | Ansible (12 roles) | Configures services, idempotent |
+| CI | Gitea + Actions runner | Lint, `tofu fmt`/`validate`, temporary test VM per run |
+| Services | PowerDNS, PostgreSQL, HAProxy, Prometheus, Grafana, Zabbix | The environment being built |
 
-**Impact:** cosmetic noise in most cases, but in Zabbix it caused an actual blocking error in the web installation wizard (`Locale for language "en_US" is not found`).
+The lab runs on the private subnet `10.20.10.0/24` with the domain `lab.local`.
 
-**Fix (temporary):** generated `en_US.UTF-8` and `nl_NL.UTF-8` per VM (`dpkg-reconfigure locales`).
+## Architecture
 
-**Fix (structural, planned):** generate both locales in templates 9000/9100, so every clone has them from the start.
+```mermaid
+flowchart LR
+  subgraph control["ans01-tl (management node)"]
+    T["OpenTofu"]
+    A["Ansible"]
+  end
+  G["git01: Gitea"] --> R["runner01: Actions runner"]
+  R -->|"lint, validate, test VM"| P
+  T -->|"API"| P["Proxmox: pve"]
+  P --> VM["Lab VMs"]
+  A -->|"SSH"| VM
+  VM --> D["PowerDNS<br>PostgreSQL<br>HAProxy<br>Web app"]
+  VM --> M["Prometheus, Grafana<br>Zabbix"]
+```
 
-**Lesson:** a fix you apply by hand on more than one VM belongs in the template or in an Ansible role. Otherwise the error returns on every new machine.
+OpenTofu decides which VMs exist. Ansible decides what runs on them. Git is the source of truth.
 
----
+## VMs and what is in code
 
-## 2. SSH key selection confusion between multiple `Host` aliases
+| VM | In OpenTofu | Role |
+|---|---|---|
+| pdns01, pdns02 | yes | DNS (PowerDNS) |
+| app01, app02 | yes | Example web app |
+| db01 | yes | PostgreSQL |
+| git01 | yes | Gitea |
+| proxy01 | yes | HAProxy |
+| mon-lab01, mon-lab02 | yes | Prometheus/Grafana and Zabbix |
+| runner01 | yes | Actions runner |
+| ans01-tl | no | management node, built by hand |
+| fw01-tl | no | OPNsense, configured by hand |
+| ai01-tl | no | AI VM with GPU passthrough, not in code yet |
+| Templates 9000, 9100, 9200 | no | built by hand, not in code |
 
-**Symptom:** repeated `Permission denied (publickey)` errors when connecting to `git01`, `mon-lab01` and `runner01`, despite a correctly loaded ssh-agent.
+That makes **10 VMs in code**. A full destroy and rebuild has been verified for 8 of them; the two PowerDNS VMs were added later and were not part of that test. The build time has not been measured yet, so it is not stated here.
 
-**Root cause, two variants:**
-1. A `Host <gitea-ip>` config block, originally meant for Gitea's own SSH server (port 2222, user `git`), also matched normal system SSH connections to the same IP (port 22, the admin user) — SSH matches on the literal address, not on intent. As a result, every system SSH attempt used the wrong port and user.
-2. The ssh-agent on `ans01-tl` repeatedly ran empty for no clear reason, despite a configured `.bashrc` autostart.
+## Repository layout
 
-**Fix:**
-1. The conflicting `Host` block was turned into a separate alias (`Host gitea-ssh`) that no longer matches the bare IP address — the Git remote URL was changed accordingly.
-2. No structural cause was found for the agent running empty; the recurring pattern is recorded as an open item.
+```
+roles/            12 Ansible roles
+playbooks/        one playbook per service
+inventories/      homelab and production (without vault files)
+opentofu/         the lab's VMs
+test_opentofu/    temporary VMs for the pipeline (VMID 240-254)
+.gitea/workflows/ CI: lint and test VM
+docs/             Root-cause analysis (English)
+```
 
-**Lesson:** give every SSH service its own alias instead of a block on an IP address. `ssh -G <host>` shows which settings actually apply to a connection.
+## Root-cause analysis
 
----
+Incidents from building the lab, each in the same format: symptom, root cause, fix, lesson.
 
-## 3. Gitea `app.ini` template overwrote runtime-generated secrets (config drift)
+[Read the analysis](docs/rca.en.md)
 
-**Symptom:** after adding an `[actions]` section to the Ansible template and re-running the playbook, the Gitea installation wizard unexpectedly reappeared — a sign that Gitea believed it had never been installed.
+## Secrets and placeholders
 
-**Root cause:** the original Ansible template for `app.ini` only contained the settings that the Ansible role set *explicitly*. Sections that Gitea itself had generated during the first-run wizard (`INTERNAL_TOKEN`, `JWT_SECRET`, `INSTALL_LOCK`, `WORK_PATH`, `[mailer]`, `[service]`, `[openid]`, etc.) were not in the template. Because `ansible.builtin.template` overwrites the target file **completely**, all configuration added by Gitea itself disappeared on every playbook run.
+Secrets are kept in Ansible Vault and are not published. `inventories/homelab/vault.yml.example` shows which variables are needed. Real values go in `vault.yml`, which is listed in `.gitignore`.
 
-**Why this was dangerous:** `INSTALL_LOCK` disappeared too, so Gitea thought it had to be installed again — one wrong click on "Install Gitea" could have damaged the existing database.
+| Placeholder | Meaning |
+|---|---|
+| `<WAARDE>` | value from your own Ansible Vault (Dutch for "value") |
+| `<TOKENNAAM>`, `<SECRET>` | Proxmox API token (`terraform.tfvars.example`) |
+| `<DB-HOST>` | address of the PostgreSQL server |
+| `<GIT-HOST>` | address of the Gitea server |
+| `<ZABBIX-SERVER-IP>` | address of the Zabbix server |
 
-**Fix (structural):**
-- The current runtime-generated values of `INTERNAL_TOKEN` and `JWT_SECRET` were taken from `/etc/gitea/app.ini` and stored in `ansible-vault` (not regenerated — the existing, working values were kept).
-- The template was extended with all sections Gitea needs, with the secrets as explicit, vault-driven variables.
-- `INSTALL_LOCK = true` was added to the template as a fixed value.
+## Deliberate lab choices
 
-**Lesson:** an Ansible template for an application that also generates or changes its own configuration must contain **all** fields the application expects — not only the fields the administrator set deliberately. Secrets the application generates itself should be "adopted" into the vault as soon as possible, instead of letting the application invent them again on every run.
+- `curl -k` in the CI workflow: the test certificate of the Proxmox API is self-signed. In production: a valid certificate or `--cacert`.
+- `sslmode=disable` for the PostgreSQL connection of the OpenTofu state: only inside the lab subnet. In production: TLS on.
+- The PostgreSQL backend for the OpenTofu state is commented out in `opentofu/main.tf`. The state is currently local.
 
----
+## Known limitations
 
-## 4. PostgreSQL/Zabbix/act_runner: `become_user` fails with a chmod error on Debian 13
+- The `postgresql` and `zabbix_server` roles never report `changed` when creating database users, even on a real change (`changed_when` is missing). This still needs fixing.
+- CI only runs checks (lint, `fmt`, `validate`). There is no `tofu plan` in the pipeline and no automatic `apply`.
+- The workflow looks for the test VM's IP address in `10.20.10.0/24`; outside this lab it must be adapted.
+- Code comments are partly Dutch. They will be translated.
 
-**Symptom:** the same error repeatedly (three times, in three different roles): `chmod: invalid mode: 'A+user:<user>:rx:allow'`, on every Ansible task that used `become_user` to run as an unprivileged user (`postgres`, `zabbix`, `act_runner`).
+## Planned
 
-**First analysis (incorrect):** "the filesystem does not support ACLs".
-
-**Root cause (corrected, not yet tested in the lab):** when Ansible runs a task as another, unprivileged user, that user must be able to read the temporary module files. Ansible first tries `setfacl` for this. That tool is in the `acl` package, which is not part of the Debian 13 cloud image. Ansible then falls back to other methods, the last one being a `chmod A+…` syntax that GNU `chmod` does not know. So the error message is about the missing package, not about the filesystem.
-
-**Fix:**
-- Temporary (applied three times): `become: true` (root) with an explicit `sudo -u <user>` inside the shell command itself.
-- Structural (next step): install the `acl` package in the base role or template, and test whether `become_user` then works without the workaround.
-
-**Lesson:** look up an error message in the documentation before assuming a cause. The first analysis was an assumption, and the workaround hid that three times.
-
----
-
-## 5. PostgreSQL: `listen_addresses` change not active before later tasks
-
-**Symptom:** `tofu init` with the PostgreSQL backend returned `connection refused`, even though the Ansible playbook had reported that `listen_addresses = '*'` was set.
-
-**Root cause:** the service restart (via the `notify` handler) by default only happens at the **end** of an Ansible playbook, not right after the task that made the change. Later tasks in the same playbook (creating the database and user) therefore still connected to the old, not-yet-restarted PostgreSQL instance — and when the state migration was attempted from another host (`ans01-tl`), the service was still listening only on `localhost`.
-
-**Fix:** added an `ansible.builtin.meta: flush_handlers` task directly after the service start task, which forces the pending handler restart before later tasks continue.
-
-**Lesson:** "changed" means the config file was modified, not that the service is using the new setting. If later tasks depend on a restart, use `flush_handlers`. Then check with `ss -tlnp` that the service is actually listening on the right address.
-
----
-
-## 6. Zabbix-specific installation problems (several, cumulative)
-
-A series of separate, individually small problems during the Zabbix installation:
-
-1. **Wrong PHP version assumption**: the role referred to `php8.2-fpm`, but Debian 13 ships with **PHP 8.4** by default. → Hardcoded to the correct version.
-2. **Schema import failed silently**: `zcat ... | psql ...` in a `shell` task reported success even though the source file did not exist (wrong path: `/usr/share/zabbix/sql-scripts/` instead of the actual `/usr/share/zabbix-sql-scripts/`). Cause: in a pipe, bash by default only checks the exit code of the *last* command (`psql`), not of `zcat`. → Path corrected, and `set -o pipefail` added so that a failure anywhere in the pipe fails the whole task.
-3. **PostgreSQL option missing in the setup wizard**: the `php8.4-pgsql` extension was not installed. → Added to the package list.
-4. **`public` schema permission error** (`permission denied for schema public`): since PostgreSQL 15, ordinary users no longer get automatic CREATE rights on the `public` schema. → Added an explicit `GRANT ALL ON SCHEMA public` task.
-5. **Password mismatch at first vault integration**: the `CREATE ROLE ... IF NOT EXISTS` task does not change the password if the role already existed with an older (placeholder) password. → Added a separate, always-run `ALTER ROLE ... PASSWORD` task, so the password matches the vault on every run.
-
-**Common lesson:** recently upgraded software (Zabbix 7.0, PostgreSQL 15+) often brings changed paths and behaviour compared to older, widely used installation guides — verify explicitly instead of relying on familiar patterns from earlier versions.
-
----
-
-## 7. `act_runner` download: outdated/moved release URL
-
-**Symptom:** `HTTP Error 404: Not Found` when downloading the `act_runner` binary from `gitea.com/gitea/act_runner/releases/...`.
-
-**Root cause:** the project was partly renamed (from `act_runner` to `runner`, from version 2.x), with an unconfirmed new URL structure. The older, stable 0.2.x series turned out to be reliably available via another domain: `dl.gitea.com/act_runner/`.
-
-**Fix:** switched back to the known, confirmed-working version (0.2.13) via the correct domain, instead of guessing the newest, uncertain URL structure.
-
-**Lesson:** for third-party release assets, verify the actual releases page and download structure instead of extrapolating a download pattern from another, outdated source.
-
----
-
-## 8. CI containers: PEP 668 blocks system-wide `pip install`
-
-**Symptom:** `error: externally-managed-environment` on `pip install ansible-lint` inside a Gitea Actions workflow.
-
-**Root cause:** modern Debian/Ubuntu-based container images apply PEP 668, a Python-wide protection against accidentally overwriting system Python packages.
-
-**Fix:** added `--break-system-packages` to all `pip install` commands in the CI workflow — the same pattern already used on the VMs themselves.
-
-**Lesson:** in a throwaway container, `--break-system-packages` is an acceptable quick fix, but it is still a workaround. Cleaner is a venv or a custom CI image with the tools already installed. That is a next step.
-
----
-
-## 9. Slow `tofu destroy` for temporary test VMs (7+ minutes)
-
-**Symptom:** the "destroy" step of the first ephemeral-test CI run hung for **more than 7 minutes**, compared to a few seconds in an earlier manual test.
-
-**Root cause:** by default, OpenTofu's Proxmox provider requests a **graceful ACPI shutdown** via the guest agent on destroy and waits patiently for the VM to shut itself down (`stop_on_destroy = false`, the default). When the guest agent responds slowly (for example right after an Ansible run that installed packages), that graceful shutdown takes much longer than expected.
-
-**Fix:** added `stop_on_destroy = true` to the resource definition of the temporary test VMs — this forces a fast, hard stop. Throwaway VMs do not need a graceful shutdown; speed matters more.
-
-**Side incident:** while debugging this slow destroy, the workflow run was mistakenly taken as "finished" while it was still running, which left an orphaned VM (`ci-test-255`) that had to be cleaned up by hand on the Proxmox host. Lesson: with a long-running, unclear CI step, first verify the actual state (e.g. `sudo qm list` on the hypervisor) before starting a new run.
-
----
-
-## Recurring patterns — summary
-
-Some types of errors came back several times, which makes them worth remembering as general lessons:
-
-1. **`become_user` without the `acl` package** → install `acl` in the base role; look up error messages first instead of assuming a cause.
-2. **Templates that overwrite application-generated configuration** → always inventory the complete, current configuration of a fresh installation before writing an Ansible template, not only the fields you set yourself.
-3. **Outdated download URLs and version numbers** → for every new service, check the current, official releases page first instead of relying on familiar patterns.
-4. **SSH key and `Host` config conflicts** → use specific, non-overlapping `Host` aliases instead of generic IP-based blocks when a host offers several SSH services or ports.
-5. **Silent failures in shell pipes** → `set -o pipefail` as a standard habit in every `ansible.builtin.shell` command with a pipe.
-6. **Manual fixes per VM** → whatever is done by hand more than once belongs in the template or in a role.
+- A k3s cluster on the lab VMs. Not built yet.

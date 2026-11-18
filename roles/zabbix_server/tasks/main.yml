@@ -1,0 +1,130 @@
+---
+# roles/zabbix_server/tasks/main.yml
+# Installeert Zabbix Server 7.0 LTS (PostgreSQL-backend, nginx-frontend)
+# via het officiële Zabbix apt-repository.
+
+- name: Ensure PostgreSQL and Python adapter are installed
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - python3-psycopg2
+    state: present
+    update_cache: true
+
+- name: Ensure PostgreSQL service is enabled and running
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Check if Zabbix repository package is already configured
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/zabbix.list
+  register: zabbix_repo_stat
+
+- name: Download Zabbix repository package
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/debian/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version }}+debian13_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: "0644"
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Install Zabbix repository package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Update apt cache after adding Zabbix repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Ensure Zabbix server, frontend, and agent packages are installed
+  ansible.builtin.apt:
+    name:
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - zabbix-nginx-conf
+      - zabbix-sql-scripts
+      - zabbix-agent2
+      - php8.4-pgsql
+    state: present
+
+- name: Check if the Zabbix database already exists
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '{{ zabbix_db_name }}'"
+  register: zabbix_db_check
+  changed_when: false
+  become: true
+
+- name: Create dedicated database for Zabbix
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "CREATE DATABASE {{ zabbix_db_name }};"
+  become: true
+  when: zabbix_db_check.stdout != "1"
+
+- name: Create dedicated PostgreSQL user for Zabbix
+  ansible.builtin.command:
+    cmd: >
+      sudo -u postgres psql -c
+      "DO $$ BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ zabbix_db_user }}') THEN
+           CREATE ROLE {{ zabbix_db_user }} WITH LOGIN PASSWORD '{{ zabbix_db_password }}';
+         END IF;
+       END $$;"
+  become: true
+  changed_when: "'CREATE ROLE' in create_zabbix_user_result.stdout | default('')"
+  register: create_zabbix_user_result
+  no_log: true
+
+- name: Ensure the Zabbix database user's password always matches the vault
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "ALTER ROLE {{ zabbix_db_user }} WITH PASSWORD '{{ zabbix_db_password }}';"
+  become: true
+  changed_when: false
+  no_log: true
+
+- name: Grant database ownership to the Zabbix user
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "ALTER DATABASE {{ zabbix_db_name }} OWNER TO {{ zabbix_db_user }};"
+  become: true
+  changed_when: false
+
+- name: Check if Zabbix schema has already been imported
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -d {{ zabbix_db_name }} -tAc "SELECT 1 FROM information_schema.tables WHERE table_name = 'users'"
+  register: zabbix_schema_check
+  changed_when: false
+  become: true
+- name: Import Zabbix database schema (this may take a few minutes)
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | PGPASSWORD='{{ zabbix_db_password }}' psql -U {{ zabbix_db_user }} -h localhost {{ zabbix_db_name }}"
+    executable: /bin/bash
+  when: zabbix_schema_check.stdout != "1"
+  no_log: true
+- name: Configure Zabbix server database password
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: "^#?DBPassword="
+    line: "DBPassword={{ zabbix_db_password }}"
+  notify: Restart zabbix-server
+  no_log: true
+
+- name: Configure nginx listen port for Zabbix frontend
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/nginx.conf
+    regexp: "^#?\\s*listen\\s+8080"
+    line: "        listen {{ zabbix_frontend_port }};"
+  notify: Restart nginx
+
+- name: Ensure Zabbix server, agent, and nginx services are enabled and running
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - zabbix-server
+    - zabbix-agent2
+    - nginx
+    - "php8.4-fpm"

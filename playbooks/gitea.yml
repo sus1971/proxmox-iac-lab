@@ -1,0 +1,6 @@
+---
+- name: Install and configure Gitea on git01
+  hosts: git_server
+  become: true
+  roles:
+    - gitea

@@ -1,0 +1,10 @@
+---
+- name: Restart zabbix-server
+  ansible.builtin.systemd:
+    name: zabbix-server
+    state: restarted
+
+- name: Restart nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted

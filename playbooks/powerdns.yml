@@ -1,0 +1,7 @@
+---
+- name: PowerDNS uitrollen
+  hosts: dns
+  become: true
+  serial: 1
+  roles:
+    - powerdns

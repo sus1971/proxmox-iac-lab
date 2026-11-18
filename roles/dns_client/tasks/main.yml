@@ -1,0 +1,20 @@
+---
+# roles/dns_client/tasks/main.yml
+# Voegt een aanvullend netplan-bestand toe (hoger volgnummer dan
+# cloud-init's 50-cloud-init.yaml) dat de DNS-server en het search-
+# domain overschrijft — overleeft reboots, want netplan past dit bij
+# elke boot opnieuw toe, in tegenstelling tot losse resolvectl-calls.
+
+- name: Render netplan DNS override
+  ansible.builtin.template:
+    src: 60-dns-override.yaml.j2
+    dest: /etc/netplan/60-dns-override.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Apply netplan
+
+- name: Ensure netplan config has correct permissions (netplan requirement)
+  ansible.builtin.file:
+    path: /etc/netplan/60-dns-override.yaml
+    mode: "0600"

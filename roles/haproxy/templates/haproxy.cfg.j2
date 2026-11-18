@@ -1,0 +1,30 @@
+# HAProxy configuratie — beheerd via Ansible, niet handmatig aanpassen
+# template: roles/haproxy/templates/haproxy.cfg.j2
+
+global
+    log /dev/log local0
+    maxconn 2000
+
+defaults
+    log     global
+    mode    http
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+
+frontend http_front
+    bind *:{{ haproxy_frontend_port }}
+    default_backend app_backend
+
+backend app_backend
+    balance roundrobin
+    option httpchk GET /
+{% for server in haproxy_backend_servers %}
+    server {{ server.name }} {{ server.address }}:{{ server.port }} check
+{% endfor %}
+
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    stats enable
+    stats uri /
+    stats refresh 10s

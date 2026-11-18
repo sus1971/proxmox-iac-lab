@@ -1,0 +1,6 @@
+---
+- name: Install and configure HAProxy on proxy01
+  hosts: proxy
+  become: true
+  roles:
+    - haproxy

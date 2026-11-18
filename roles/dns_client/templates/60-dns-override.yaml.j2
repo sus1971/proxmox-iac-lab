@@ -1,0 +1,7 @@
+network:
+  version: 2
+  ethernets:
+    {{ dns_client_interface }}:
+      nameservers:
+        addresses: [{{ dns_client_servers | join(', ') }}]
+        search: [{{ dns_client_domain }}]

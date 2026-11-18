@@ -1,0 +1,76 @@
+name: Ephemeral Test VM
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-test-configure-destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+          chmod +x install-opentofu.sh
+          ./install-opentofu.sh --install-method standalone --skip-verify
+          rm install-opentofu.sh
+
+      - name: Install Ansible
+        run: pip install --break-system-packages ansible
+
+      - name: Determine test VM ID
+        id: vmid
+        run: echo "id=$(( 240 + (${{ gitea.run_number }} % 15) ))" >> "$GITEA_OUTPUT"
+        # 240 + (run_number modulo 15) houdt het altijd binnen 240-254
+
+      - name: Create test VM
+        working-directory: test_opentofu
+        env:
+          TF_VAR_proxmox_endpoint: ${{ secrets.PROXMOX_ENDPOINT }}
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+          TF_VAR_test_vm_id: ${{ steps.vmid.outputs.id }}
+        run: |
+          tofu init
+          tofu apply -auto-approve
+
+      - name: Wait for cloud-init to finish
+        run: sleep 45
+        # ruwe, simpele wachttijd i.p.v. actief pollen — voldoende
+        # voor een lab-omgeving, geen productie-grade retry-logica
+
+      - name: Set up SSH key for Ansible
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.RUNNER_SSH_KEY }}" > ~/.ssh/id_ed25519_runner01
+          chmod 600 ~/.ssh/id_ed25519_runner01
+
+      - name: Get test VM IP via Proxmox API
+        id: vmip
+        env:
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+        run: |
+          VM_ID="${{ steps.vmid.outputs.id }}"
+          # -k: bewuste labkeuze (zelfondertekend certificaat op pve); productie: geldig certificaat of --cacert
+          IP=$(curl -s -k -H "Authorization: PVEAPIToken=${TF_VAR_proxmox_api_token}" \
+            "${{ secrets.PROXMOX_ENDPOINT }}/nodes/pve/qemu/${VM_ID}/agent/network-get-interfaces" \
+            | grep -oP '"ip-address":"10\.20\.10\.\d+"' | head -1 | grep -oP '10\.20\.10\.\d+')
+          echo "ip=$IP" >> "$GITEA_OUTPUT"
+          echo "Gevonden IP: $IP"
+
+      - name: Run dummy_webapp role against test VM
+        run: |
+          echo "${{ steps.vmip.outputs.ip }} ansible_user=frank ansible_ssh_private_key_file=~/.ssh/id_ed25519_runner01 ansible_ssh_common_args='-o StrictHostKeyChecking=no'" > /tmp/test_inventory
+          ansible-playbook -i /tmp/test_inventory playbooks/dummy_webapp.yml --limit all
+      - name: Destroy test VM
+        if: always()
+        working-directory: test_opentofu
+        env:
+          TF_VAR_proxmox_endpoint: ${{ secrets.PROXMOX_ENDPOINT }}
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+          TF_VAR_test_vm_id: ${{ steps.vmid.outputs.id }}
+        run: tofu destroy -auto-approve
+        # if: always() — GARANDEERT dat de VM wordt afgebroken, ook als
+        # een eerdere stap (Ansible-role) faalt. Dit is de kern van
+        # 'vee, niet huisdier': falen mag nooit een VM achterlaten

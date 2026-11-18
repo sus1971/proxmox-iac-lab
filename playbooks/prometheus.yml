@@ -1,0 +1,6 @@
+---
+- name: Install and configure Prometheus on mon-lab01
+  hosts: mon-lab01
+  become: true
+  roles:
+    - prometheus

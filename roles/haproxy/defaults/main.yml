@@ -1,0 +1,9 @@
+haproxy_frontend_port: 80
+haproxy_stats_port: 8404
+haproxy_backend_servers:
+  - name: app01
+    address: app01.lab.local
+    port: 80
+  - name: app02
+    address: app02.lab.local
+    port: 80

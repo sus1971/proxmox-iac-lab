@@ -1,0 +1,19 @@
+# Beheerd door Ansible (rol powerdns)
+launch=gsqlite3
+gsqlite3-database={{ powerdns_db }}
+local-address=127.0.0.1,{{ ansible_host }}
+local-port={{ powerdns_auth_port }}
+api=yes
+api-key={{ powerdns_api_key }}
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port={{ powerdns_api_port }}
+webserver-allow-from=127.0.0.1
+{% if powerdns_is_primary %}
+primary=yes
+allow-axfr-ips={{ powerdns_secondary_ip }}
+also-notify={{ powerdns_secondary_ip }}:{{ powerdns_auth_port }}
+default-soa-content={{ powerdns_primary_host }}.{{ powerdns_zone }} hostmaster.@ 0 10800 3600 604800 3600
+{% else %}
+secondary=yes
+{% endif %}

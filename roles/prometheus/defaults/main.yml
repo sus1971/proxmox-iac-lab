@@ -1,0 +1,23 @@
+prometheus_version: "3.14.0"
+prometheus_user: prometheus
+prometheus_home: /var/lib/prometheus
+prometheus_config_dir: /etc/prometheus
+prometheus_port: 9090
+prometheus_retention: "15d"
+prometheus_scrape_targets:
+  - name: app01
+    address: app01.lab.local
+  - name: app02
+    address: app02.lab.local
+  - name: db01
+    address: db01.lab.local
+  - name: git01
+    address: git01.lab.local
+  - name: proxy01
+    address: proxy01.lab.local
+  - name: mon-lab01
+    address: mon-lab01.lab.local
+  - name: pdns01
+    address: pdns01.lab.local
+  - name: pdns02
+    address: pdns02.lab.local

@@ -1,0 +1,57 @@
+name: Lint and Validate
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  ansible-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ansible-lint
+        run: pip install --break-system-packages --ignore-installed ansible-lint
+
+      - name: Run ansible-lint
+        run: ansible-lint playbooks/ roles/ || true
+        # || true: voor nu niet blokkerend, zodat je eerst ziet wat
+        # ansible-lint allemaal meldt voordat je de pipeline strikt maakt
+
+  yaml-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install --break-system-packages yamllint
+
+      - name: Run yamllint
+        run: yamllint . || true
+
+  opentofu-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+          chmod +x install-opentofu.sh
+          ./install-opentofu.sh --install-method standalone --skip-verify
+          rm install-opentofu.sh
+
+      - name: Check formatting
+        working-directory: opentofu
+        run: tofu fmt -check -recursive || true
+
+      - name: Validate configuration
+        working-directory: opentofu
+        run: |
+          tofu init -backend=false
+          tofu validate

@@ -1,0 +1,6 @@
+---
+- name: Install and configure Zabbix Server on mon-lab02
+  hosts: mon-lab02
+  become: true
+  roles:
+    - zabbix_server

@@ -1,0 +1,6 @@
+---
+- name: Deploy minimal dummy webapp for load balancing tests
+  hosts: app_servers
+  become: true
+  roles:
+    - dummy_webapp

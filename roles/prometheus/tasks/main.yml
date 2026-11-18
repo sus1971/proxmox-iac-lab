@@ -1,0 +1,103 @@
+---
+# roles/prometheus/tasks/main.yml
+# Installeert Prometheus als native binary met dedicated systeemgebruiker,
+# systemd-service, en getemplate scrape-configuratie.
+
+- name: Create dedicated system group for Prometheus
+  ansible.builtin.group:
+    name: "{{ prometheus_user }}"
+    system: true
+    state: present
+
+- name: Create dedicated system user for Prometheus
+  ansible.builtin.user:
+    name: "{{ prometheus_user }}"
+    group: "{{ prometheus_user }}"
+    home: "{{ prometheus_home }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create required directories with correct ownership
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_user }}"
+    mode: "0750"
+  loop:
+    - "{{ prometheus_home }}"
+    - "{{ prometheus_config_dir }}"
+
+- name: Check if Prometheus binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/prometheus
+  register: prometheus_binary_stat
+
+- name: Get installed Prometheus version (if binary exists)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/prometheus --version
+  register: prometheus_installed_version
+  changed_when: false
+  when: prometheus_binary_stat.stat.exists
+  check_mode: false
+
+- name: Determine whether Prometheus needs to be installed or upgraded
+  ansible.builtin.set_fact:
+    prometheus_needs_install: "{{ not prometheus_binary_stat.stat.exists or prometheus_version not in prometheus_installed_version.stdout | default('') }}"
+
+- name: Download and extract Prometheus (with automatic checksum verification)
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: prometheus_needs_install
+  # unarchive met remote_src: true download EN pakt uit in één stap,
+  # rechtstreeks op de target — geen aparte lookup('file', ...) nodig
+
+- name: Install Prometheus and promtool binaries
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  loop:
+    - prometheus
+    - promtool
+  when: prometheus_needs_install
+
+- name: Render Prometheus scrape configuration from template
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_user }}"
+    mode: "0640"
+  notify: Restart prometheus
+
+- name: Render systemd service unit from template
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus
+
+- name: Reload systemd daemon to pick up service unit changes
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Ensure Prometheus service is enabled and running
+  ansible.builtin.systemd:
+    name: prometheus
+    state: started
+    enabled: true
+
+- name: Clean up extracted archive from /tmp
+  ansible.builtin.file:
+    path: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
+    state: absent
+  when: prometheus_needs_install

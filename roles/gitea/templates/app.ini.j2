@@ -1,0 +1,40 @@
+; Gitea configuratie — beheerd via Ansible, niet handmatig aanpassen
+; template: roles/gitea/templates/app.ini.j2
+
+APP_NAME = Homelab Gitea
+RUN_MODE = prod
+RUN_USER = {{ gitea_user }}
+WORK_PATH = {{ gitea_data_dir }}
+
+[server]
+DOMAIN           = {{ gitea_domain }}
+HTTP_PORT        = {{ gitea_http_port }}
+ROOT_URL         = http://{{ gitea_domain }}:{{ gitea_http_port }}/
+DISABLE_SSH      = false
+SSH_PORT         = {{ gitea_ssh_port }}
+START_SSH_SERVER = true
+; eigen SSH-poort i.p.v. systeem-SSH, voorkomt conflict met beheer-SSH op deze VM
+
+[database]
+DB_TYPE = sqlite3
+PATH    = {{ gitea_data_dir }}/gitea.db
+; SQLite: ruim voldoende voor een lab, geen aparte db-server nodig
+
+[repository]
+ROOT = {{ gitea_data_dir }}/repositories
+
+[log]
+ROOT_PATH = {{ gitea_data_dir }}/log
+
+[actions]
+ENABLED = true
+
+[security]
+INSTALL_LOCK = true
+INTERNAL_TOKEN = {{ gitea_internal_token }}
+; expliciet vastgelegd i.p.v. door Gitea laten genereren — voorkomt dat
+; elke playbook-run (die het bestand overschrijft) een nieuwe token
+; genereert en bestaande sessies/tokens ongeldig maakt
+
+[oauth2]
+JWT_SECRET = {{ gitea_jwt_secret }}

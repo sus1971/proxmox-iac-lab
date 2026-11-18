@@ -1,0 +1,47 @@
+---
+# roles/zabbix_agent/tasks/main.yml
+# Installeert Zabbix Agent 2 en configureert het om te rapporteren
+# aan de Zabbix Server op mon-lab02.
+
+- name: Check if Zabbix repository package is already configured
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/zabbix.list
+  register: zabbix_repo_stat
+
+- name: Download Zabbix repository package
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/debian/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version }}+debian13_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: "0644"
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Install Zabbix repository package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Update apt cache after adding Zabbix repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: not zabbix_repo_stat.stat.exists
+
+- name: Ensure Zabbix Agent 2 is installed
+  ansible.builtin.apt:
+    name: zabbix-agent2
+    state: present
+
+- name: Render Zabbix Agent 2 configuration from template
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zabbix-agent2
+
+- name: Ensure Zabbix Agent 2 service is enabled and running
+  ansible.builtin.systemd:
+    name: zabbix-agent2
+    state: started
+    enabled: true

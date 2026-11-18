@@ -1,0 +1,154 @@
+---
+# roles/gitea/tasks/main.yml
+# Installeert Gitea als native binary met een dedicated systeemgebruiker,
+# systemd-service, en getemplate configuratie. Geen Docker, geen apt-package
+# (die loopt vaak achter) — bewust gekozen als leeroefening in service-beheer
+# via Ansible, herbruikbaar patroon voor toekomstige services (bijv. runner01).
+
+- name: Ensure required system packages are present
+  ansible.builtin.apt:
+    name:
+      - git
+      - curl
+      - gnupg
+      - sqlite3
+    state: present
+    update_cache: true
+  # git: Gitea heeft de git-binary zelf nodig om repo-operaties uit te voeren
+  # sqlite3: databasebackend voor Gitea, licht genoeg voor een lab
+
+- name: Create dedicated system group for Gitea
+  ansible.builtin.group:
+    name: "{{ gitea_user }}"
+    system: true
+    state: present
+  # Systeemgroep (geen normale user-groep), past bij hoe service-accounts
+  # in productie-achtige setups horen te werken
+
+- name: Create dedicated system user for Gitea
+  ansible.builtin.user:
+    name: "{{ gitea_user }}"
+    group: "{{ gitea_user }}"
+    home: "{{ gitea_home }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+  # shell: /usr/sbin/nologin — deze user is puur om de service onder te
+  # draaien, nooit bedoeld om interactief mee in te loggen
+
+- name: Create required directories with correct ownership
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ gitea_user }}"
+    group: "{{ gitea_user }}"
+    mode: "0750"
+  loop:
+    - "{{ gitea_data_dir }}"
+    - "{{ gitea_data_dir }}/repositories"
+    - "{{ gitea_data_dir }}/log"
+    - "{{ gitea_config_dir }}"
+  # Data, repositories, logs en config los van elkaar, zodat je later
+  # gericht kunt backuppen (repositories/) zonder logs mee te slepen
+
+- name: Check if Gitea binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/gitea
+  register: gitea_binary_stat
+  # stat is een read-only module die WEL normaal draait in --check mode,
+  # in tegenstelling tot command/shell — dit is de basis van de
+  # idempotentie-check verderop in deze role
+
+- name: Get installed Gitea version (if binary exists)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/gitea --version
+  register: gitea_installed_version
+  changed_when: false
+  when: gitea_binary_stat.stat.exists
+  check_mode: false
+  # check_mode: false dwingt deze read-only taak om ook in --check mode
+  # echt uit te voeren — nodig omdat de output hieronder gebruikt wordt
+  # om te bepalen of een download/upgrade nodig is
+
+- name: Determine whether Gitea needs to be installed or upgraded
+  ansible.builtin.set_fact:
+    gitea_needs_install: "{{ not gitea_binary_stat.stat.exists or gitea_version not in gitea_installed_version.stdout }}"
+  # Eén centrale variabele i.p.v. dezelfde or-conditie in elke taak
+  # herhalen — makkelijker te lezen en te onderhouden
+
+- name: Download Gitea binary (with automatic checksum verification)
+  ansible.builtin.get_url:
+    url: "https://dl.gitea.com/gitea/{{ gitea_version }}/gitea-{{ gitea_version }}-linux-amd64"
+    dest: "/tmp/gitea-{{ gitea_version }}"
+    mode: "0755"
+    checksum: "sha256:https://dl.gitea.com/gitea/{{ gitea_version }}/gitea-{{ gitea_version }}-linux-amd64.sha256"
+  when: gitea_needs_install
+  # get_url ondersteunt 'checksum: algoritme:URL' — het haalt en parseert
+  # het .sha256-bestand zelf, op dezelfde host als de download (git01),
+  # in plaats van een aparte lookup('file', ...) die verkeerd de control
+  # node zou lezen in plaats van de target
+
+- name: Stop Gitea service before replacing binary (if upgrading)
+  ansible.builtin.systemd:
+    name: gitea
+    state: stopped
+  when:
+    - gitea_binary_stat.stat.exists
+    - gitea_needs_install
+  # Alleen stoppen als er al een (oudere) versie + service bestond —
+  # bij een verse installatie bestaat de systemd-unit nog niet, dus
+  # is er niets om te stoppen (en zou dit een foutmelding geven)
+
+- name: Install Gitea binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/gitea-{{ gitea_version }}"
+    dest: /usr/local/bin/gitea
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  when: gitea_needs_install
+  # remote_src: true — het bronbestand staat al op de target (in /tmp),
+  # niet op de Ansible control node
+
+- name: Render Gitea configuration file from template
+  ansible.builtin.template:
+    src: app.ini.j2
+    dest: "{{ gitea_config_dir }}/app.ini"
+    owner: "{{ gitea_user }}"
+    group: "{{ gitea_user }}"
+    mode: "0640"
+  notify: Restart gitea
+  # mode 0640: leesbaar voor de gitea-user en root, niet voor iedereen —
+  # dit bestand kan later secrets bevatten (bijv. mail-server credentials)
+
+- name: Render systemd service unit from template
+  ansible.builtin.template:
+    src: gitea.service.j2
+    dest: /etc/systemd/system/gitea.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart gitea
+  # Wijziging aan de unit-file vereist een daemon-reload, geregeld via
+  # de handler hieronder
+
+- name: Reload systemd daemon to pick up service unit changes
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Ensure Gitea service is enabled and started
+  ansible.builtin.systemd:
+    name: gitea
+    state: started
+    enabled: true
+  # enabled: true zorgt dat Gitea ook na een reboot van git01 automatisch
+  # weer opstart, zonder handmatig ingrijpen
+
+- name: Clean up downloaded binary from /tmp
+  ansible.builtin.file:
+    path: "/tmp/gitea-{{ gitea_version }}"
+    state: absent
+  when: gitea_needs_install
+  # Opruimen na installatie — /tmp is geen plek om binaries te laten
+  # rondslingeren

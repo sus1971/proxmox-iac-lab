@@ -1,0 +1,10 @@
+gitea_version: "1.27.3"
+gitea_user: git
+gitea_home: /home/git
+gitea_data_dir: /var/lib/gitea
+gitea_config_dir: /etc/gitea
+gitea_http_port: 3000
+gitea_ssh_port: 2222
+gitea_domain: "<GIT-HOST>"
+gitea_internal_token: "{{ vault_gitea_internal_token }}"
+gitea_jwt_secret: "{{ vault_gitea_jwt_secret }}"

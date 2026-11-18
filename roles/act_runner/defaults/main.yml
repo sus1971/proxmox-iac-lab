@@ -1,0 +1,5 @@
+act_runner_version: "0.2.13"
+act_runner_gitea_url: "http://git01.lab.local:3000"
+act_runner_home: /var/lib/act_runner
+act_runner_user: act_runner
+act_runner_token: "{{ vault_act_runner_token }}"

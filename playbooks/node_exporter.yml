@@ -1,0 +1,6 @@
+---
+- name: Install Node Exporter on all lab VMs for Prometheus scraping
+  hosts: app_servers,db01,git_server,proxy,monitoring,dns
+  become: true
+  roles:
+    - node_exporter

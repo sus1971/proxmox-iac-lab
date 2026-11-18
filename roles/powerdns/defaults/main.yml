@@ -1,0 +1,30 @@
+---
+powerdns_zone: lab.local
+powerdns_reverse_zone: 10.20.10.in-addr.arpa
+powerdns_repo_base: https://repo.powerdns.com
+powerdns_repos:
+  - auth-51
+  - rec-54
+powerdns_db_dir: /var/lib/pdns
+powerdns_db: "{{ powerdns_db_dir }}/pdns.sqlite3"
+powerdns_schema: >-
+  /usr/share/doc/pdns-backend-sqlite/schema.sqlite3.sql
+powerdns_auth_port: 5300
+powerdns_api_port: 8081
+powerdns_api_key: "{{ vault_powerdns_api_key }}"
+powerdns_recursor_allow_from:
+  - 10.20.10.0/24
+  - 127.0.0.0/8
+powerdns_upstream_dns: 8.8.8.8
+powerdns_primary_host: pdns01
+powerdns_is_primary: >-
+  {{ inventory_hostname == powerdns_primary_host }}
+powerdns_primary_ip: >-
+  {{ hostvars[powerdns_primary_host].ansible_host }}
+powerdns_secondary_ip: >-
+  {{ hostvars[groups['dns']
+  | difference([powerdns_primary_host])
+  | first].ansible_host }}
+powerdns_api_url: >-
+  http://127.0.0.1:{{ powerdns_api_port }}/api/v1/servers/localhost
+powerdns_records: []

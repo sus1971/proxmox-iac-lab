@@ -1,0 +1,17 @@
+---
+powerdns_primary_host: pdns01
+powerdns_records:
+  - { name: fw01-tl, ip: 10.20.10.1 }
+  - { name: pve, ip: 10.20.10.3 }
+  - { name: ans01-tl, ip: 10.20.10.10 }
+  - { name: pdns01, ip: 10.20.10.11 }
+  - { name: pdns02, ip: 10.20.10.12 }
+  - { name: runner01, ip: 10.20.10.32 }
+  - { name: app01, ip: 10.20.10.51 }
+  - { name: app02, ip: 10.20.10.52 }
+  - { name: db01, ip: 10.20.10.53 }
+  - { name: git01, ip: 10.20.10.54 }
+  - { name: proxy01, ip: 10.20.10.55 }
+  - { name: mon-lab01, ip: 10.20.10.56 }
+  - { name: mon-lab02, ip: 10.20.10.57 }
+  - { name: ai01-tl, ip: 10.20.10.58 }

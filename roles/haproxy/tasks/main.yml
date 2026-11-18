@@ -1,0 +1,29 @@
+---
+# roles/haproxy/tasks/main.yml
+# Installeert HAProxy en configureert load balancing naar de backend-servers
+# gedefinieerd in defaults/main.yml (app01/app02).
+
+- name: Ensure HAProxy is installed
+  ansible.builtin.apt:
+    name: haproxy
+    state: present
+    update_cache: true
+
+- name: Render HAProxy configuration from template
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "haproxy -c -f %s"
+  notify: Restart haproxy
+  # validate: laat haproxy zelf de gegenereerde config syntax-checken
+  # VOORDAT het bestand daadwerkelijk wordt weggeschreven — voorkomt dat
+  # een typefout in de template een kapotte, actieve config oplevert
+
+- name: Ensure HAProxy service is enabled and running
+  ansible.builtin.systemd:
+    name: haproxy
+    state: started
+    enabled: true

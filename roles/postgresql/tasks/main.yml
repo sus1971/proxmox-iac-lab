@@ -1,0 +1,102 @@
+---
+# roles/postgresql/tasks/main.yml
+# Installeert PostgreSQL en richt een dedicated database + user in voor
+# gebruik als OpenTofu remote-state-backend (fase 9).
+
+- name: Ensure PostgreSQL and Python adapter are installed
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - python3-psycopg2
+    state: present
+    update_cache: true
+  # python3-psycopg2: vereist door Ansible's postgresql_* modules zelf,
+  # niet door PostgreSQL — dit draait op de TARGET, niet de control node
+
+- name: Ensure PostgreSQL is listening on the correct addresses
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/17/main/postgresql.conf
+    regexp: "^#?listen_addresses"
+    line: "listen_addresses = '{{ postgresql_listen_addresses }}'"
+  notify: Restart postgresql
+
+- name: Allow connections from the homelab subnet
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/17/main/pg_hba.conf
+    regexp: '^host\s+{{ postgresql_tofu_db }}\s+{{ postgresql_tofu_user }}\s'
+    line: "host    {{ postgresql_tofu_db }}    {{ postgresql_tofu_user }}    {{ postgresql_allowed_subnet }}    scram-sha-256"
+    insertafter: EOF
+  notify: Restart postgresql
+  # scram-sha-256: moderne, veiligere authenticatiemethode dan het
+  # verouderde md5 — PostgreSQL 17 gebruikt dit standaard
+
+- name: Ensure PostgreSQL service is enabled and running
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Flush handlers so listen_addresses takes effect before continuing
+  ansible.builtin.meta: flush_handlers
+  # Forceert de 'Restart postgresql'-handler NU uit te voeren, in plaats
+  # van pas aan het eind van het playbook. Zonder dit zouden latere
+  # taken (database/user aanmaken) kunnen draaien tegen een PostgreSQL-
+  # instantie die de nieuwe listen_addresses nog niet heeft toegepast —
+  # dit was de oorzaak van de eerdere 'connection refused' op afstand.
+
+- name: Create dedicated database for OpenTofu state
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '{{ postgresql_tofu_db }}'"
+  register: db_check
+  changed_when: false
+  become: true
+
+- name: Create the database if it does not exist
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "CREATE DATABASE {{ postgresql_tofu_db }};"
+  become: true
+  when: db_check.stdout != "1"
+  # Handmatige idempotentie-check: psql zelf heeft geen 'create if not
+  # exists' voor databases, dus checken we eerst of 'ie al bestaat
+
+- name: Create dedicated user for OpenTofu state access
+  ansible.builtin.command:
+    cmd: >
+      sudo -u postgres psql -c
+      "DO $$ BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ postgresql_tofu_user }}') THEN
+           CREATE ROLE {{ postgresql_tofu_user }} WITH LOGIN PASSWORD '{{ postgresql_tofu_password }}';
+         END IF;
+       END $$;"
+  become: true
+  changed_when: "'CREATE ROLE' in create_user_result.stdout | default('')"
+  register: create_user_result
+  no_log: true
+  # no_log: true — dit commando bevat het wachtwoord in de cmd-string;
+  # voorkomt dat het in plaintext in de Ansible-output verschijnt
+
+- name: Ensure the tofu user's password always matches the vault
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "ALTER ROLE {{ postgresql_tofu_user }} WITH PASSWORD '{{ postgresql_tofu_password }}';"
+  become: true
+  changed_when: false
+  no_log: true
+  # Dit lost het probleem op dat we tegenkwamen: CREATE ROLE ... IF NOT
+  # EXISTS wijzigt het wachtwoord niet als de rol al bestond. Deze taak
+  # forceert het wachtwoord ALTIJD gelijk te zijn aan wat in de vault
+  # staat, idempotent en zonder het zichtbaar te loggen.
+
+- name: Grant privileges on the database to the tofu user
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE {{ postgresql_tofu_db }} TO {{ postgresql_tofu_user }};"
+  become: true
+  changed_when: false
+
+- name: Grant schema privileges (required since PostgreSQL 15)
+  ansible.builtin.command:
+    cmd: sudo -u postgres psql -d {{ postgresql_tofu_db }} -c "GRANT ALL ON SCHEMA public TO {{ postgresql_tofu_user }};"
+  become: true
+  changed_when: false
+  # Sinds PostgreSQL 15 heeft het public-schema geen automatische CREATE-
+  # rechten meer voor gewone users — dit is de fix voor de
+  # 'permission denied for schema public'-fout die we tegenkwamen

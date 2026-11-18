@@ -1,0 +1,26 @@
+# Beheerd door Ansible (rol powerdns)
+incoming:
+  listen:
+    - {{ ansible_host }}
+  allow_from:
+{% for net in powerdns_recursor_allow_from %}
+    - {{ net }}
+{% endfor %}
+recursor:
+  forward_zones:
+    - zone: {{ powerdns_zone }}
+      forwarders:
+        - 127.0.0.1:{{ powerdns_auth_port }}
+    - zone: {{ powerdns_reverse_zone }}
+      forwarders:
+        - 127.0.0.1:{{ powerdns_auth_port }}
+  forward_zones_recurse:
+    - zone: .
+      forwarders:
+        - {{ powerdns_upstream_dns }}
+dnssec:
+  negative_trustanchors:
+    - name: {{ powerdns_zone }}
+      reason: interne zone zonder DNSSEC
+    - name: {{ powerdns_reverse_zone }}
+      reason: interne zone zonder DNSSEC

@@ -1,0 +1,63 @@
+---
+# roles/grafana/tasks/main.yml
+# Installeert Grafana via het officiële apt-repository en configureert
+# automatisch een Prometheus data source.
+
+- name: Ensure prerequisite packages are present
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - gnupg2
+    state: present
+    update_cache: true
+
+- name: Add Grafana GPG key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+  # /etc/apt/keyrings/ is de moderne, aanbevolen locatie voor apt-keys
+  # sinds Debian de oude apt-key-methode heeft afgeschaft
+
+- name: Add Grafana apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    state: present
+    filename: grafana
+
+- name: Ensure Grafana is installed
+  ansible.builtin.apt:
+    name: grafana
+    state: present
+    update_cache: true
+
+- name: Configure Grafana HTTP port
+  ansible.builtin.lineinfile:
+    path: /etc/grafana/grafana.ini
+    regexp: "^;?http_port"
+    line: "http_port = {{ grafana_http_port }}"
+    insertafter: "^\\[server\\]"
+  notify: Restart grafana
+
+- name: Ensure Grafana service is enabled and running
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: started
+    enabled: true
+
+- name: Ensure provisioning directory for data sources exists
+  ansible.builtin.file:
+    path: /etc/grafana/provisioning/datasources
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0750"
+
+- name: Provision Prometheus as a Grafana data source
+  ansible.builtin.template:
+    src: prometheus-datasource.yml.j2
+    dest: /etc/grafana/provisioning/datasources/prometheus.yml
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana

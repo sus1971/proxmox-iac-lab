@@ -1,0 +1,16 @@
+# Zabbix Agent 2 configuratie — beheerd via Ansible
+# template: roles/zabbix_agent/templates/zabbix_agent2.conf.j2
+
+PidFile=/run/zabbix/zabbix_agent2.pid
+LogFile=/var/log/zabbix/zabbix_agent2.log
+LogFileSize=1
+
+Server={{ zabbix_server_ip }}
+ServerActive={{ zabbix_server_ip }}
+Hostname={{ inventory_hostname }}
+
+ControlSocket=/run/zabbix/agent.sock
+
+Include=/etc/zabbix/zabbix_agent2.d/*.conf
+
+Include=/etc/zabbix/zabbix_agent2.d/plugins.d/*.conf

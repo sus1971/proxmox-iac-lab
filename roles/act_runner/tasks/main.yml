@@ -1,0 +1,115 @@
+---
+# roles/act_runner/tasks/main.yml
+# Installeert Gitea's act_runner (CI/CD-runner) als native binary met
+# een dedicated systeemgebruiker en systemd-service. Registreert zich
+# automatisch bij Gitea via het token uit de vault.
+
+- name: Ensure Docker is installed (required to run CI job containers)
+  ansible.builtin.apt:
+    name:
+      - docker.io
+    state: present
+    update_cache: true
+
+- name: Ensure Docker service is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Create dedicated system group for act_runner
+  ansible.builtin.group:
+    name: "{{ act_runner_user }}"
+    system: true
+    state: present
+
+- name: Create dedicated system user for act_runner
+  ansible.builtin.user:
+    name: "{{ act_runner_user }}"
+    group: "{{ act_runner_user }}"
+    home: "{{ act_runner_home }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+    groups: docker
+    append: true
+  # groups: docker — nodig zodat act_runner de Docker-daemon kan
+  # aanspreken om CI-job-containers te starten
+
+- name: Check if act_runner binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/act_runner
+  register: act_runner_binary_stat
+
+- name: Get installed act_runner version (if binary exists)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/act_runner --version
+  register: act_runner_installed_version
+  changed_when: false
+  when: act_runner_binary_stat.stat.exists
+  check_mode: false
+
+- name: Determine whether act_runner needs to be installed or upgraded
+  ansible.builtin.set_fact:
+    act_runner_needs_install: "{{ not act_runner_binary_stat.stat.exists or act_runner_version not in act_runner_installed_version.stdout | default('') }}"
+
+- name: Download act_runner binary
+  ansible.builtin.get_url:
+    url: "https://dl.gitea.com/act_runner/{{ act_runner_version }}/act_runner-{{ act_runner_version }}-linux-amd64"
+    dest: "/tmp/act_runner-{{ act_runner_version }}"
+    mode: "0755"
+  when: act_runner_needs_install
+
+- name: Install act_runner binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/act_runner-{{ act_runner_version }}"
+    dest: /usr/local/bin/act_runner
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  when: act_runner_needs_install
+
+- name: Check if act_runner is already registered with Gitea
+  ansible.builtin.stat:
+    path: "{{ act_runner_home }}/.runner"
+  register: act_runner_registered
+
+- name: Register act_runner with Gitea
+  ansible.builtin.command:
+    cmd: >
+      sudo -u {{ act_runner_user }} /usr/local/bin/act_runner register
+      --no-interactive
+      --instance {{ act_runner_gitea_url }}
+      --token {{ act_runner_token }}
+      --name runner01
+  become: true
+  args:
+    chdir: "{{ act_runner_home }}"
+  when: not act_runner_registered.stat.exists
+  no_log: true
+
+- name: Render systemd service unit from template
+  ansible.builtin.template:
+    src: act_runner.service.j2
+    dest: /etc/systemd/system/act_runner.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart act_runner
+
+- name: Reload systemd daemon to pick up service unit changes
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Ensure act_runner service is enabled and running
+  ansible.builtin.systemd:
+    name: act_runner
+    state: started
+    enabled: true
+
+- name: Clean up downloaded binary from /tmp
+  ansible.builtin.file:
+    path: "/tmp/act_runner-{{ act_runner_version }}"
+    state: absent
+  when: act_runner_needs_install

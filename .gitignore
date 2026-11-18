@@ -1,0 +1,20 @@
+# Ansible
+*.retry
+.vault_pass
+*.vault_pass
+
+# Lokale overrides die niet gedeeld moeten worden
+inventories/*/group_vars/*_local.yml
+
+# Editor/OS rommel
+.DS_Store
+*.swp
+*~
+
+# OpenTofu (straks relevant, alvast meenemen)
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+vault.yml

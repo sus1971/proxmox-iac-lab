@@ -1,0 +1,10 @@
+---
+- name: Restart pdns
+  ansible.builtin.service:
+    name: pdns
+    state: restarted
+
+- name: Restart pdns-recursor
+  ansible.builtin.service:
+    name: pdns-recursor
+    state: restarted

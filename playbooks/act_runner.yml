@@ -1,0 +1,6 @@
+---
+- name: Install and register Gitea Actions runner on runner01
+  hosts: runner01
+  become: true
+  roles:
+    - act_runner

@@ -1,0 +1,15 @@
+[Unit]
+Description=Gitea Actions Runner
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{ act_runner_user }}
+Group={{ act_runner_user }}
+WorkingDirectory={{ act_runner_home }}
+ExecStart=/usr/local/bin/act_runner daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

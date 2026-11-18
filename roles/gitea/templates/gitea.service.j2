@@ -1,0 +1,20 @@
+; systemd unit voor Gitea — beheerd via Ansible
+; template: roles/gitea/templates/gitea.service.j2
+
+[Unit]
+Description=Gitea (Git with a cup of tea)
+After=network.target
+
+[Service]
+Type=simple
+User={{ gitea_user }}
+Group={{ gitea_user }}
+WorkingDirectory={{ gitea_data_dir }}
+ExecStart=/usr/local/bin/gitea web --config {{ gitea_config_dir }}/app.ini
+Restart=on-failure
+; herstart bij crash, maar niet in een oneindige loop bij een kapotte config
+
+Environment=USER={{ gitea_user }} HOME={{ gitea_home }} GITEA_WORK_DIR={{ gitea_data_dir }}
+
+[Install]
+WantedBy=multi-user.target

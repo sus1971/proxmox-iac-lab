@@ -1,0 +1,106 @@
+---
+- name: EPEL installeren
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: PowerDNS-sleutel importeren
+  ansible.builtin.rpm_key:
+    key: "{{ powerdns_repo_base }}/FD380FBB-pub.asc"
+    state: present
+
+- name: PowerDNS-repo's plaatsen
+  ansible.builtin.get_url:
+    url: "{{ powerdns_repo_base }}/repo-files/el-{{ item }}.repo"
+    dest: "/etc/yum.repos.d/powerdns-{{ item }}.repo"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ powerdns_repos }}"
+
+- name: PowerDNS-pakketten installeren
+  ansible.builtin.dnf:
+    name:
+      - pdns
+      - pdns-backend-sqlite
+      - pdns-recursor
+      - sqlite
+    state: present
+
+- name: Databasemap
+  ansible.builtin.file:
+    path: "{{ powerdns_db_dir }}"
+    state: directory
+    owner: pdns
+    group: pdns
+    mode: "0750"
+
+- name: Database aanmaken met schema
+  ansible.builtin.shell: >-
+    sqlite3 {{ powerdns_db }} < {{ powerdns_schema }}
+  args:
+    creates: "{{ powerdns_db }}"
+
+- name: Database-rechten
+  ansible.builtin.file:
+    path: "{{ powerdns_db }}"
+    owner: pdns
+    group: pdns
+    mode: "0640"
+
+- name: SELinux-poorten
+  ansible.builtin.include_tasks: selinux.yml
+
+- name: Authoritative-config
+  ansible.builtin.template:
+    src: pdns.conf.j2
+    dest: /etc/pdns/pdns.conf
+    owner: root
+    group: pdns
+    mode: "0640"
+  notify: Restart pdns
+
+- name: Recursor-config
+  ansible.builtin.template:
+    src: recursor.yml.j2
+    dest: /etc/pdns-recursor/recursor.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart pdns-recursor
+
+- name: Services starten en activeren
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - pdns
+    - pdns-recursor
+
+- name: Handlers uitvoeren vóór de API-calls
+  ansible.builtin.meta: flush_handlers
+
+- name: Wachten op de API
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ powerdns_api_port }}"
+    timeout: 30
+
+- name: Zone en records
+  ansible.builtin.include_tasks: zone.yml
+
+- name: Reverse-zone en PTR-records
+  ansible.builtin.include_tasks: reverse.yml
+
+- name: resolv.conf met eigen Recursor eerst
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Beheerd door Ansible (rol powerdns)
+      search {{ powerdns_zone }}
+      nameserver {{ ansible_host }}
+      nameserver 1.1.1.1

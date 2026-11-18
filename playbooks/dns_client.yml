@@ -1,0 +1,7 @@
+---
+- name: Configure DNS client settings on all lab VMs
+  hosts: app_servers,db01,git_server,proxy,monitoring,ci_runner
+  serial: 1
+  become: true
+  roles:
+    - dns_client

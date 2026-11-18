@@ -1,0 +1,5 @@
+dns_client_servers:
+  - 10.20.10.11
+  - 10.20.10.12
+dns_client_domain: lab.local
+dns_client_interface: eth0

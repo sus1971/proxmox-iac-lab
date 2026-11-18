@@ -1,0 +1,8 @@
+---
+# Handler wordt alleen aangeroepen als een task hem expliciet 'notify't
+# (zie tasks/main.yml) — voorkomt onnodige restarts bij elke playbook-run
+
+- name: Restart gitea
+  ansible.builtin.systemd:
+    name: gitea
+    state: restarted

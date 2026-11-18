@@ -1,0 +1,5 @@
+postgresql_tofu_db: tofu_state
+postgresql_tofu_user: tofu
+postgresql_tofu_password: "{{ vault_postgresql_tofu_password }}"
+postgresql_listen_addresses: "*"
+postgresql_allowed_subnet: "10.20.10.0/24"

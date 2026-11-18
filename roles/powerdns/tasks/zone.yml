@@ -1,0 +1,107 @@
+---
+- name: Bestaat de zone al
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones/{{ powerdns_zone }}."
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    status_code: [200, 404]
+  register: pdns_zone
+  changed_when: false
+  no_log: true
+
+- name: Zone aanmaken (primary)
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones"
+    method: POST
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    body_format: json
+    body:
+      name: "{{ powerdns_zone }}."
+      kind: Master
+      nameservers:
+        - "pdns01.{{ powerdns_zone }}."
+        - "pdns02.{{ powerdns_zone }}."
+    status_code: 201
+  when:
+    - powerdns_is_primary
+    - pdns_zone.status == 404
+  no_log: true
+
+- name: Zone aanmaken (secondary)
+  ansible.builtin.uri:
+    url: "{{ powerdns_api_url }}/zones"
+    method: POST
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    body_format: json
+    body:
+      name: "{{ powerdns_zone }}."
+      kind: Slave
+      masters:
+        - "{{ powerdns_primary_ip }}:{{ powerdns_auth_port }}"
+    status_code: 201
+  when:
+    - not powerdns_is_primary
+    - pdns_zone.status == 404
+  no_log: true
+
+- name: Zone-overdracht aanvragen (secondary)
+  ansible.builtin.uri:
+    url: >-
+      {{ powerdns_api_url }}/zones/{{ powerdns_zone }}./axfr-retrieve
+    method: PUT
+    headers:
+      X-API-Key: "{{ powerdns_api_key }}"
+    status_code: [200, 400, 422]
+  when: not powerdns_is_primary
+  changed_when: false
+  no_log: true
+
+- name: Records beheren (primary)
+  when: powerdns_is_primary
+  block:
+    - name: Zonestatus ophalen
+      ansible.builtin.uri:
+        url: "{{ powerdns_api_url }}/zones/{{ powerdns_zone }}."
+        headers:
+          X-API-Key: "{{ powerdns_api_key }}"
+      register: pdns_state
+      changed_when: false
+      no_log: true
+
+    - name: Bestaande A-records als naam naar IP
+      ansible.builtin.set_fact:
+        pdns_existing: >-
+          {{ dict(a_sets | map(attribute='name')
+          | zip(a_sets | map(attribute='records')
+          | map('first') | map(attribute='content'))) }}
+      vars:
+        a_sets: >-
+          {{ pdns_state.json.rrsets
+          | selectattr('type', 'eq', 'A') | list }}
+
+    - name: A-records bijwerken bij afwijking
+      ansible.builtin.uri:
+        url: "{{ powerdns_api_url }}/zones/{{ powerdns_zone }}."
+        method: PATCH
+        headers:
+          X-API-Key: "{{ powerdns_api_key }}"
+        body_format: json
+        body:
+          rrsets:
+            - name: "{{ item.name }}.{{ powerdns_zone }}."
+              type: A
+              ttl: 300
+              changetype: REPLACE
+              records:
+                - content: "{{ item.ip }}"
+                  disabled: false
+        status_code: 204
+      loop: "{{ powerdns_records }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: >-
+        pdns_existing[item.name ~ '.' ~ powerdns_zone ~ '.']
+        | default('') != item.ip
+      no_log: true

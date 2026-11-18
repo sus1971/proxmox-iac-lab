@@ -1,0 +1,17 @@
+[Unit]
+Description=Prometheus
+After=network.target
+
+[Service]
+Type=simple
+User={{ prometheus_user }}
+Group={{ prometheus_user }}
+ExecStart=/usr/local/bin/prometheus \
+  --config.file={{ prometheus_config_dir }}/prometheus.yml \
+  --storage.tsdb.path={{ prometheus_home }} \
+  --storage.tsdb.retention.time={{ prometheus_retention }} \
+  --web.listen-address=:{{ prometheus_port }} 
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

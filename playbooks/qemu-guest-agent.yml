@@ -1,0 +1,27 @@
+---
+- name: Ensure qemu-guest-agent is installed and running
+  hosts: all:!pve
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Alleen KVM-gasten (niet pve, niet LXC)
+      ansible.builtin.meta: end_host
+      when: not (ansible_facts['virtualization_type'] == 'kvm' and ansible_facts['virtualization_role'] == 'guest')
+
+    - name: Refresh apt cache (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install qemu-guest-agent package
+      ansible.builtin.package:
+        name: qemu-guest-agent
+        state: present
+
+    - name: Ensure qemu-guest-agent service is enabled and running
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        state: started
+        enabled: true

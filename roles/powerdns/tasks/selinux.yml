@@ -1,0 +1,20 @@
+---
+- name: SELinux-tools installeren
+  ansible.builtin.dnf:
+    name: policycoreutils-python-utils
+    state: present
+
+- name: Eigen poortlabels ophalen
+  ansible.builtin.command: semanage port -l -C
+  register: pdns_ports
+  changed_when: false
+
+- name: Authoritative-poort als DNS-poort labelen
+  ansible.builtin.command: >-
+    semanage port -a -t dns_port_t -p {{ item }}
+    {{ powerdns_auth_port }}
+  loop: [tcp, udp]
+  when: >-
+    ['dns_port_t', item, powerdns_auth_port | string] | join(' ')
+    not in pdns_ports.stdout.split() | join(' ')
+  notify: Restart pdns

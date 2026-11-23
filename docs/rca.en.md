@@ -131,6 +131,46 @@ A series of separate, individually small problems during the Zabbix installation
 
 ---
 
+## 10. Ephemeral test: zero hosts, then four config errors
+
+**Symptom:** the Ansible step of the ephemeral test
+reported `hosts (0)`. The role never ran. After that was
+fixed, the run failed four times, each time at a different
+step.
+
+**Root cause:** five separate causes, none in the role
+itself:
+
+1. The generated inventory had no `[app_servers]` group,
+   so the playbook matched no hosts.
+2. The secret `PROXMOX_ENDPOINT` pointed to the firewall
+   (`10.20.10.1`) instead of the Proxmox host
+   (`10.20.10.3`). Log: `dial tcp 10.20.10.1:8006`.
+3. The new secret value ended in a period and a newline.
+   Log: `parse ".../api2/json.\n"`.
+4. The private key in `RUNNER_SSH_KEY` was damaged while
+   pasting. Log: `error in libcrypto`.
+5. `vm.tf` gave the test VM three public keys, but not
+   the one matching `RUNNER_SSH_KEY`. Log:
+   `Permission denied (publickey)`.
+
+**Fix:** added the `[app_servers]` group to the inventory
+step. Set the endpoint to the Proxmox host. Re-entered
+both secrets without extra characters. Added the matching
+public key to `test_opentofu/vm.tf` (applied in the source
+repository). The last run ended with `Job succeeded`: the
+role ran against the test VM, and the VM was destroyed
+afterwards.
+
+**Lesson:** a run without errors is not proof; check that
+each step did real work (`hosts (0)` is not a pass). Fix
+one cause per run, so only one new error is left. For a
+secret, check the structure of the value (trailing
+characters, line breaks) and compare key fingerprints
+before changing code.
+
+---
+
 ## Recurring patterns
 
 Some types of errors came back several times, which makes them worth remembering as general lessons:

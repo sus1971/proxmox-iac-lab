@@ -61,7 +61,8 @@ jobs:
 
       - name: Run dummy_webapp role against test VM
         run: |
-          echo "${{ steps.vmip.outputs.ip }} ansible_user=frank ansible_ssh_private_key_file=~/.ssh/id_ed25519_runner01 ansible_ssh_common_args='-o StrictHostKeyChecking=no'" > /tmp/test_inventory
+          echo "[app_servers]" > /tmp/test_inventory
+          echo "${{ steps.vmip.outputs.ip }} ansible_user=frank ansible_ssh_private_key_file=~/.ssh/id_ed25519_runner01 ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> /tmp/test_inventory
           ansible-playbook -i /tmp/test_inventory playbooks/dummy_webapp.yml --limit all
       - name: Destroy test VM
         if: always()

@@ -1,6 +1,6 @@
 # proxmox-iac-lab
 
-[Nederlands](README.nl.md) · English
+[Nederlands, korte ingang](README.nl.md) · English
 
 A home lab where a small business environment is built and torn down entirely as code: virtual machines with OpenTofu, configuration with Ansible, checks through a CI pipeline. The lab is a personal learning environment, not production.
 
@@ -16,7 +16,7 @@ Status: first version. See [Planned](#planned).
 | Network | OPNsense (`fw01-tl`) | Firewall and routing for the lab subnet |
 | Provisioning | OpenTofu, `bpg/proxmox` provider | Clones VMs from templates |
 | Configuration | Ansible (12 roles) | Configures services, idempotent |
-| CI | Gitea + Actions runner | Lint, `tofu fmt`/`validate`, temporary test VM per run |
+| CI | Gitea + Actions runner | Lint, `tofu fmt`/`validate`, temporary test VM (manual run) |
 | Services | PowerDNS, PostgreSQL, HAProxy, Prometheus, Grafana, Zabbix | The environment being built |
 
 The lab runs on the private subnet `10.20.10.0/24` with the domain `lab.local`.
@@ -93,11 +93,29 @@ Secrets are kept in Ansible Vault and are not published. `inventories/homelab/va
 - `curl -k` in the CI workflow: the test certificate of the Proxmox API is self-signed. In production: a valid certificate or `--cacert`.
 - `sslmode=disable` for the PostgreSQL connection of the OpenTofu state: only inside the lab subnet. In production: TLS on.
 - The PostgreSQL backend for the OpenTofu state is commented out in `opentofu/main.tf`. The state is currently local.
+- `host_key_checking = False` in `ansible.cfg`: lab VMs
+  are rebuilt often and get new host keys. In production:
+  managed `known_hosts`.
+- Lint does not block: `ansible-lint`, `yamllint` and
+  `tofu fmt -check` end in `|| true`. Findings show in the
+  log but do not fail the run. `tofu validate` does block.
+  Next step: fix the findings, then make lint blocking.
+- HAProxy stats page on port 8404, on all interfaces and
+  without a login. It is read-only. In production:
+  `stats auth`, and bind it to a management address only.
+- `inventories/production/hosts.yml` is an empty
+  placeholder. It shows the intended layout; there are no
+  production hosts.
 
 ## Known limitations
 
 - The `postgresql` and `zabbix_server` roles never report `changed` when creating database users, even on a real change (`changed_when` is missing). This still needs fixing.
-- CI only runs checks (lint, `fmt`, `validate`). There is no `tofu plan` in the pipeline and no automatic `apply`.
+- CI has two workflows. `lint.yml` runs on every push to
+  `master`: lint, `fmt` and `validate`.
+  `ephemeral-test.yml` runs only when started by hand: it
+  creates a temporary VM, runs a role against it and
+  destroys it. There is no `tofu plan` for the lab itself
+  and no automatic `apply`.
 - The workflow looks for the test VM's IP address in `10.20.10.0/24`; outside this lab it must be adapted.
 - Code comments are partly Dutch. They will be translated.
 

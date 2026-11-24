@@ -1,5 +1,6 @@
 vault_act_runner_token: <WAARDE>
 vault_gitea_internal_token: <WAARDE>
 vault_gitea_jwt_secret: <WAARDE>
+vault_gitea_secret_key: <WAARDE>
 vault_postgresql_tofu_password: <WAARDE>
 vault_powerdns_api_key: <WAARDE>

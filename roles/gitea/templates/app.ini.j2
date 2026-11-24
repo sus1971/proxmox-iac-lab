@@ -32,6 +32,7 @@ ENABLED = true
 [security]
 INSTALL_LOCK = true
 INTERNAL_TOKEN = {{ gitea_internal_token }}
+SECRET_KEY = {{ gitea_secret_key }}
 ; expliciet vastgelegd i.p.v. door Gitea laten genereren — voorkomt dat
 ; elke playbook-run (die het bestand overschrijft) een nieuwe token
 ; genereert en bestaande sessies/tokens ongeldig maakt

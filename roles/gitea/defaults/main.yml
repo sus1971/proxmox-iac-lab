@@ -8,3 +8,4 @@ gitea_ssh_port: 2222
 gitea_domain: "<GIT-HOST>"
 gitea_internal_token: "{{ vault_gitea_internal_token }}"
 gitea_jwt_secret: "{{ vault_gitea_jwt_secret }}"
+gitea_secret_key: "{{ vault_gitea_secret_key }}"

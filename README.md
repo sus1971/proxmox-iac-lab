@@ -111,7 +111,8 @@ Secrets are kept in Ansible Vault and are not published. `inventories/homelab/va
 
 - The `postgresql` and `zabbix_server` roles never report `changed` when creating database users, even on a real change (`changed_when` is missing). This still needs fixing.
 - CI has two workflows. `lint.yml` runs on every push to
-  `master`: lint, `fmt` and `validate`.
+  `master` in the source repository on Gitea (this
+  mirror uses `main`): lint, `fmt` and `validate`.
   `ephemeral-test.yml` runs only when started by hand: it
   creates a temporary VM, runs a role against it and
   destroys it. There is no `tofu plan` for the lab itself
